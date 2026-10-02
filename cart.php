@@ -1,48 +1,49 @@
 <?php
-session_start();
-include 'connection.php';
+    session_start();
+    include 'connection.php';
 
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
-    exit();
-}
+    if (!isset($_SESSION['user_id'])) {
+        header("Location: login.php");
+        exit();
+    }
 
-$userId = (int)$_SESSION['user_id'];
+    $userId = (int)$_SESSION['user_id'];
 
-// Verify the user still exists
-$stmt = $conn->prepare("SELECT id FROM users WHERE id = ?");
-$stmt->bind_param('i', $userId);
-$stmt->execute();
+    // Verify the user still exists
+    $stmt = $conn->prepare("SELECT id FROM users WHERE id = ?");
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
 
-if (!$stmt->get_result()->fetch_assoc()) {
-    session_unset();
-    session_destroy();
-    header("Location: login.php");
-    exit();
-}
+    if (!$stmt->get_result()->fetch_assoc()) {
+        session_unset();
+        session_destroy();
+        header("Location: login.php");
+        exit();
+    }
 
-// Get cart items
-$stmt = $conn->prepare("
-    SELECT cd.prod_id, cd.cqty, p.name, p.price, p.stock, p.image
-    FROM cart_master cm
-    JOIN cart_details cd ON cd.cart_id = cm.cart_id
-    JOIN products p ON p.id = cd.prod_id
-    WHERE cm.user_id = ?
-    ORDER BY cd.prod_id
-");
-$stmt->bind_param('i', $userId);
-$stmt->execute();
-$items = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    // Get cart items
+    $stmt = $conn->prepare("
+        SELECT cd.cart_detail_id, cd.prod_id, cd.cqty, p.name, p.price, p.stock, p.image
+        FROM cart_master cm
+        JOIN cart_details cd ON cd.cart_id = cm.cart_id
+        JOIN products p ON p.id = cd.prod_id
+        WHERE cm.user_id = ?
+        ORDER BY cd.prod_id
+    ");
 
-$total     = 0;
-$cartCount = 0;
-foreach ($items as $it) {
-    $total     += $it['price'] * $it['cqty'];
-    $cartCount += (int)$it['cqty'];
-}
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
+    $items = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 
-$flash = $_SESSION['flash'] ?? null;
-unset($_SESSION['flash']);
+    $total     = 0;
+    $cartCount = 0;
+    foreach ($items as $it) {
+        $total     += $it['price'] * $it['cqty'];
+        $cartCount += (int)$it['cqty'];
+    }
+
+    $flash = $_SESSION['flash'] ?? null;
+    unset($_SESSION['flash']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -98,6 +99,8 @@ unset($_SESSION['flash']);
                             <table class="table align-middle mb-0">
                                 <thead class="table-light">
                                     <tr>
+                                        <th>C_ID</th>
+                                        <th>Product ID</th> 
                                         <th>Product</th>
                                         <th>Price</th>
                                         <th style="width: 180px;">Quantity</th>
@@ -108,6 +111,8 @@ unset($_SESSION['flash']);
                                 <tbody>
                                     <?php foreach ($items as $it): ?>
                                         <tr>
+                                            <td><?= (int)$it['cart_detail_id'] ?></td>
+                                            <td><?= (int)$it['prod_id'] ?></td> 
                                             <td>
                                                 <div class="d-flex align-items-center gap-2">
                                                     <img src="<?= htmlspecialchars($it['image'] ?: 'uploads/placeholder.svg') ?>"
