@@ -109,9 +109,9 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <?php foreach ($items as $it): ?>
+                                    <?php  $no = 1;  foreach ($items as $it): ?>
                                         <tr>
-                                            <td><?= (int)$it['cart_detail_id'] ?></td>
+                                            <td><?= $no++ ?></td>
                                             <td><?= (int)$it['prod_id'] ?></td> 
                                             <td>
                                                 <div class="d-flex align-items-center gap-2">
