@@ -1,0 +1,368 @@
+==========================================================================
+        SALES SYSTEM - COMPLETE SYSTEM LOGIC FLOW EXPLANATION
+==========================================================================
+
+--------------------------------------------------------------------------
+1. SYSTEM OVERVIEW
+--------------------------------------------------------------------------
+This is a PHP + MySQL e-commerce sales system built with:
+   - PHP 8 (procedural style with MySQLi prepared statements)
+   - MySQL database (InnoDB engine - supports transactions)
+   - Bootstrap 5 (UI framework)
+   - Sessions (to track logged-in users and pass flash messages)
+
+PAGES IN THE SYSTEM:
+   connection.php    -> database connection (included by all pages)
+   login.php         -> user authentication
+   logout.php        -> destroys session
+   index.php         -> product listing / dashboard
+   add_to_cart.php   -> adds a product to the cart (POST only)
+   cart.php          -> displays the user's cart
+   update_cart.php   -> updates quantity or removes an item (POST only)
+   checkout.php      -> places the order (moves cart to orders)
+
+--------------------------------------------------------------------------
+2. DATABASE STRUCTURE (TABLE RELATIONSHIPS)
+--------------------------------------------------------------------------
+   users                       products
+   --------                    ---------
+   id (PK)                     id (PK)
+   username                    name
+   password (hashed!)          price
+                               stock
+                               image
+
+   cart_master                 cart_details
+   ------------                -------------
+   cart_id (PK)                cart_detail_id (PK)
+   user_id (FK -> users)       cart_id (FK -> cart_master)
+                               prod_id (FK -> products)
+                               cqty  (quantity in cart)
+
+   RELATIONSHIPS:
+   - One USER has one CART          (cart_master.user_id -> users.id)
+   - One CART has many CART DETAILS (cart_details.cart_id -> cart_master.cart_id)
+   - One CART DETAIL points to one PRODUCT (cart_details.prod_id -> products.id)
+
+   This is a classic ONE-TO-MANY design:
+   cart_master = the "container" (the box)
+   cart_details = the "contents" (items inside the box)
+
+--------------------------------------------------------------------------
+3. SESSION & AUTHENTICATION FLOW
+--------------------------------------------------------------------------
+   [User visits any page]
+          |
+          v
+   session_start() -- resumes/creates session
+          |
+          v
+   Is $_SESSION['user_id'] set?
+          |
+    ------+------
+   NO           YES
+    |             |
+    v             v
+ Redirect to   Continue...
+ login.php
+
+   LOGIN FLOW:
+   1. User submits username + password (POST)
+   2. Query: SELECT id, password FROM users WHERE username = ?
+   3. Verify with password_verify($input, $hash)   <- passwords are HASHED
+   4. If correct: $_SESSION['user_id'] = id, redirect to index.php
+   5. If wrong: show error flash message
+
+   LOGOUT FLOW:
+   1. session_unset()   -> clears all session variables
+   2. session_destroy() -> deletes the session file on the server
+   3. Redirect to login.php
+
+   WHY SESSIONS?
+   HTTP is STATELESS - the server forgets you between requests.
+   The session keeps the user logged in using a cookie (PHPSESSID)
+   that matches a data file stored on the SERVER (not the browser).
+
+--------------------------------------------------------------------------
+4. FLASH MESSAGES (how feedback survives redirects)
+--------------------------------------------------------------------------
+   PROBLEM: After a redirect, the new page has no memory of what
+            happened on the previous page.
+
+   SOLUTION: Store the message in $_SESSION before redirecting.
+
+   FLOW:
+   1. add_to_cart.php sets: $_SESSION['flash'] = ['type'=>'success',
+                            'message'=>'"Mouse" added to cart.']
+   2. Redirect to index.php
+   3. index.php reads $_SESSION['flash'], displays the alert box
+   4. index.php calls unset($_SESSION['flash'])  <- shown only ONCE
+   5. Refreshing the page will NOT show the message again
+
+--------------------------------------------------------------------------
+5. INDEX.PHP - PRODUCT LISTING FLOW
+--------------------------------------------------------------------------
+   1. Check session (must be logged in)
+   2. Verify user still exists in DB (in case account was deleted)
+   3. Query: SELECT * FROM products
+   4. Display products in a card/table grid with:
+      - image, name, price, stock
+      - "Add to Cart" form (POST -> add_to_cart.php)
+   5. Show cart badge count in the navbar
+   6. Display flash message if one exists
+
+--------------------------------------------------------------------------
+6. ADD_TO_CART.PHP - THE CORE LOGIC (MOST IMPORTANT!)
+--------------------------------------------------------------------------
+   [User clicks "Add to Cart" on index.php]
+          |
+          v
+   POST request with product_id + quantity
+          |
+          v
+   STEP 1: Auth check (logged in?)
+          |
+          v
+   STEP 2: Method check ($_SERVER['REQUEST_METHOD'] === 'POST')
+           -> blocks direct URL access (GET requests)
+          |
+          v
+   STEP 3: Validate input
+           filter_input(INPUT_POST, 'product_id', FILTER_VALIDATE_INT)
+           -> returns the int, or false/null if invalid
+           -> reject if missing, non-numeric, or quantity < 1
+          |
+          v
+   STEP 4: BEGIN TRANSACTION
+           $conn->begin_transaction()
+           -> groups all queries into ONE atomic unit
+           -> nothing is permanent until commit()
+          |
+          v
+   STEP 5: Fetch product WITH ROW LOCK
+           SELECT id, name, stock FROM products WHERE id = ? FOR UPDATE
+           |
+           FOR UPDATE = locks the row so TWO buyers can't oversell
+           the same stock at the same time (race condition prevention)
+           |
+           Product exists?
+           NO -> throw RuntimeException('Product not found.')
+          |
+          v
+   STEP 6: Find user's cart
+           SELECT cart_id FROM cart_master WHERE user_id = ?
+           ORDER BY cart_id DESC LIMIT 1
+           |
+           Cart exists?
+           NO -> INSERT INTO cart_master (user_id) VALUES (?)
+                 $cartId = $conn->insert_id  (gets the new auto-increment ID)
+          |
+          v
+   STEP 7: Check if product already in cart
+           SELECT cqty FROM cart_details
+           WHERE cart_id = ? AND prod_id = ?
+           -> $inCart = current quantity (0 if not in cart yet)
+          |
+          v
+   STEP 8: Stock validation (business rule)
+           Is ($inCart + $quantity) > stock?
+           YES -> throw error: "Only X of Y in stock"
+           NO  -> continue
+          |
+          v
+   STEP 9: UPSERT the cart item (insert OR update in one query)
+           INSERT INTO cart_details (cart_id, prod_id, cqty)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE cqty = cqty + VALUES(cqty)
+           |
+           CASE A: product NOT in cart -> normal INSERT (new row)
+           CASE B: product ALREADY in cart -> adds new qty ON TOP
+                   (e.g. had 2, adding 3 -> becomes 5)
+          |
+          v
+   STEP 10: COMMIT
+           $conn->commit()
+           -> ALL changes become permanent
+           -> row lock from FOR UPDATE is released
+          |
+          v
+   STEP 11: Set success flash message
+          |
+          v
+   STEP 12: Redirect to index.php (PRG pattern)
+
+   IF ANY STEP THROWS AN ERROR:
+          |
+          v
+   CATCH BLOCK:
+   - if transaction is active -> $conn->rollback()
+     (undoes EVERYTHING - even cart creation - database is untouched)
+   - store error message in flash
+   - redirect to index.php
+
+--------------------------------------------------------------------------
+7. CART.PHP - VIEW CART FLOW
+--------------------------------------------------------------------------
+   1. Auth check + user existence check
+   2. Query with THREE-WAY JOIN:
+
+      SELECT cd.cart_detail_id, cd.prod_id, cd.cqty,
+             p.name, p.price, p.stock, p.image
+      FROM cart_master cm
+      JOIN cart_details cd ON cd.cart_id = cm.cart_id
+      JOIN products p ON p.id = cd.prod_id
+      WHERE cm.user_id = ?
+      ORDER BY cd.cart_detail_id ASC
+
+      JOIN EXPLANATION:
+      - cart_master: finds THIS user's cart
+      - cart_details: gets all rows/items inside that cart
+      - products: gets name/price/stock for each item
+      - WHERE cm.user_id = ? : only THIS user's cart
+      - ORDER BY cd.cart_detail_id ASC : items in the order added
+
+   3. Loop through items and compute:
+      - subtotal per row  = price * cqty
+      - cart total        = sum of all subtotals
+      - cart count        = sum of all quantities (for navbar badge)
+
+   4. Display:
+      - Detail ID, Product ID, Product, Price, Quantity, Subtotal
+      - Quantity form (POST -> update_cart.php, action=update)
+      - Remove button  (POST -> update_cart.php, action=remove)
+      - Stock warning if quantity in cart > available stock
+      - Order Summary card with total + "Place Order" button
+
+   5. If cart is empty -> show "Your cart is empty" message
+
+--------------------------------------------------------------------------
+8. UPDATE_CART.PHP - UPDATE / REMOVE FLOW
+--------------------------------------------------------------------------
+   POST data: product_id, action ('update' or 'remove'), quantity
+
+   IF action = 'update':
+   1. Validate quantity (must be >= 1)
+   2. Check stock is enough
+   3. UPDATE cart_details SET cqty = ? WHERE cart_id = ? AND prod_id = ?
+   4. Flash success, redirect to cart.php
+
+   IF action = 'remove':
+   1. DELETE FROM cart_details WHERE cart_id = ? AND prod_id = ?
+   2. Flash success, redirect to cart.php
+
+   (Both use prepared statements + transactions for safety)
+
+--------------------------------------------------------------------------
+9. CHECKOUT.PHP - PLACE ORDER FLOW
+--------------------------------------------------------------------------
+   1. Auth check
+   2. BEGIN TRANSACTION
+   3. Fetch all cart items (same 3-way JOIN as cart.php)
+   4. Re-validate stock for EVERY item (stock may have changed
+      since the item was added!)
+   5. INSERT INTO order_master (user_id, total, ...) -> get order_id
+   6. For each cart item:
+      INSERT INTO order_details (order_id, prod_id, qty, price, ...)
+      UPDATE products SET stock = stock - qty WHERE id = ?
+   7. DELETE the cart (cart_details rows, then cart_master row)
+   8. COMMIT  -> order is permanent
+   9. Flash: "Order placed successfully!"
+  10. Redirect (to receipt / index)
+
+   IF anything fails -> ROLLBACK -> nothing changes, error flash shown
+
+   WHY RE-CHECK STOCK AT CHECKOUT?
+   Between adding to cart and checking out, another user may have
+   bought the same product. The cart is a "reservation", not a
+   guarantee. Stock is only truly deducted at checkout.
+
+--------------------------------------------------------------------------
+10. KEY SECURITY CONCEPTS (DEFENSE ANSWERS)
+--------------------------------------------------------------------------
+
+   SQL INJECTION -> PREVENTED BY PREPARED STATEMENTS
+   - SQL template is sent to MySQL FIRST and compiled WITHOUT data
+   - User data is sent SEPARATELY via bind_param()
+   - Data can NEVER be executed as SQL code
+   - BAD:  "SELECT * FROM products WHERE id = $id"   (injectable!)
+   - GOOD: "SELECT * FROM products WHERE id = ?" + bind_param('i', $id)
+
+   bind_param TYPE CHARACTERS:
+   i = integer | s = string | d = double | b = blob
+   Order of types MUST match order of ? placeholders
+
+   XSS (Cross-Site Scripting) -> PREVENTED BY htmlspecialchars()
+   - All user/DB data echoed in HTML is escaped
+   - htmlspecialchars("<script>") becomes "&lt;script&gt;"
+   - Browser displays it as text instead of running it
+
+   PASSWORD SECURITY -> password_hash() + password_verify()
+   - Hashing is ONE-WAY: cannot reverse the hash to get the password
+   - password_verify() compares input against the stored hash safely
+   - NEVER store plain-text passwords
+
+   CSRF-lite -> POST-ONLY endpoints
+   - State-changing pages (add/update/checkout) reject GET requests
+
+--------------------------------------------------------------------------
+11. KEY DATABASE CONCEPTS (DEFENSE ANSWERS)
+--------------------------------------------------------------------------
+
+   TRANSACTION (ACID)
+   - Atomic: all queries succeed together or none apply
+   - begin_transaction() -> ... queries ... -> commit() / rollback()
+   - Used because checkout/add-to-cart touches MULTIPLE tables
+
+   FOR UPDATE (Row Locking)
+   - Locks the selected row until commit/rollback
+   - Prevents RACE CONDITIONS (two users overselling the last item)
+
+   ON DUPLICATE KEY UPDATE (UPSERT)
+   - One query handles both INSERT (new item) and
+     UPDATE (existing item) cases atomically
+   - Requires a UNIQUE constraint on (cart_id, prod_id)
+
+   AUTO_INCREMENT + insert_id
+   - MySQL assigns the next ID automatically on INSERT
+   - $conn->insert_id returns that new ID (PDO: lastInsertId())
+
+   JOINS
+   - INNER JOIN: only rows that match in BOTH tables
+   - Our cart query joins 3 tables to combine cart + items + products
+
+   PREPARED STATEMENTS ALSO GIVE PERFORMANCE
+   - MySQL compiles the query once; repeated runs are faster
+
+--------------------------------------------------------------------------
+12. PDO vs MySQLi DIFFERENCES USED IN THIS PROJECT
+--------------------------------------------------------------------------
+   PURPOSE              PDO                        MySQLi (used here)
+   -------------------  -------------------------  ----------------------
+   Single value fetch   $stmt->fetchColumn()       fetch_row()[0]
+   Last insert ID       $pdo->lastInsertId()       $conn->insert_id
+   Is transaction open  $pdo->inTransaction()      manual flag
+                                                   ($transactionActive)
+   Named placeholders   :name supported            only ? positional
+   Database support     many databases             MySQL only
+
+--------------------------------------------------------------------------
+13. COMPLETE USER JOURNEY (END-TO-END)
+--------------------------------------------------------------------------
+   1. Guest visits site -> redirected to login.php
+   2. Logs in -> session created -> lands on index.php
+   3. Browses products -> clicks "Add to Cart" (qty 2)
+      -> add_to_cart.php: transaction, lock, upsert, commit
+      -> flash: "Mouse added to cart" -> back to index.php
+   4. Clicks cart icon -> cart.php shows the item + total
+   5. Changes quantity to 3 -> update_cart.php (action=update)
+      -> redirected back to cart.php with updated totals
+   6. Clicks trash icon on another item -> update_cart.php (action=remove)
+      -> item deleted, redirected back
+   7. Clicks "Place Order" -> confirm() dialog -> checkout.php
+      -> stock re-checked, order created, stock deducted, cart emptied
+   8. Flash: "Order placed!" -> done
+   9. Clicks Logout -> session destroyed -> back to login.php
+
+==========================================================================
+                          END OF SYSTEM FLOW
+==========================================================================
