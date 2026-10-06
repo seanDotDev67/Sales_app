@@ -36,6 +36,60 @@ unset($_SESSION['flash']);
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <title>Dashboard</title>
+
+    <style>
+        /* ===== Product Card Hover Effects ===== */
+        .product-card {
+            transition: transform .3s ease, box-shadow .3s ease;
+            overflow: hidden;
+        }
+
+        .product-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 1rem 2rem rgba(0, 0, 0, .18) !important;
+        }
+
+        /* Image zoom on hover */
+        .product-card .card-img-top {
+            transition: transform .4s ease;
+        }
+
+        .product-card:hover .card-img-top {
+            transform: scale(1.08);
+        }
+
+        /* Title color change on hover */
+        .product-card .card-title {
+            transition: color .3s ease;
+        }
+
+        .product-card:hover .card-title {
+            color: #0d6efd;
+        }
+
+        /* Price badge pop effect */
+        .product-card .badge {
+            transition: transform .3s ease;
+        }
+
+        .product-card:hover .badge {
+            transform: scale(1.1);
+        }
+
+        /* Smooth button transitions */
+        .product-card .btn {
+            transition: all .25s ease;
+        }
+
+        .product-card .btn:hover {
+            transform: translateY(-2px);
+        }
+
+        /* Quantity input focus glow */
+        .product-card .form-control:focus {
+            box-shadow: 0 0 0 .2rem rgba(13, 110, 253, .25);
+        }
+    </style>
 </head>
 <body class="bg-light">
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
@@ -85,7 +139,7 @@ unset($_SESSION['flash']);
             <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-lg-4 g-4">
                 <?php foreach ($products as $p): ?>
                     <div class="col">
-                        <div class="card h-100 shadow-sm">
+                        <div class="card h-100 shadow-sm product-card">
                             <img src="<?= htmlspecialchars($p['image'] ?: 'uploads/placeholder.svg') ?>"
                                  onerror="this.onerror=null; this.src='uploads/placeholder.svg';"
                                  class="card-img-top"
