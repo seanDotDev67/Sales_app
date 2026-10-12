@@ -3,7 +3,7 @@
 > **A simple PHP-based Sales Management System** for managing products, shopping carts, checkout, and user authentication.
 
 Built with **PHP + MySQL** and designed to run locally using **XAMPP/WAMP**.
-**Please note to change your UI aron dili ta ma sakpan ni sir**
+
 ---
 
 ## ✨ Features
