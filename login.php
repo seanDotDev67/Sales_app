@@ -22,6 +22,7 @@ if (isset($_POST['login'])) {
             if ($user && $user['password'] === $password) {
                 $_SESSION['user_id'] = $user['id'];
                 $_SESSION['username'] = $user['username'];
+                $_SESSION['role_id'] = $user['role_id'];
 
                 header("Location: index.php");
                 exit();
