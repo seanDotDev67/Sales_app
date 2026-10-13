@@ -51,6 +51,7 @@ if ($action === 'remove') {
     $stmt = $conn->prepare("DELETE FROM cart_details WHERE cart_id = ? AND prod_id = ?");
     $stmt->bind_param('ii', $cartId, $productId);
     $stmt->execute();
+    $stmt->close();
     $_SESSION['flash'] = ['type' => 'success', 'message' => 'Item removed from cart.'];
 } else {
     $quantity = filter_input(INPUT_POST, 'quantity', FILTER_VALIDATE_INT);
@@ -60,7 +61,8 @@ if ($action === 'remove') {
         exit();
     }
 
-    $stmt = $conn->prepare("SELECT name, stock FROM products WHERE id = ?");
+    // ✅ FIXED: changed 'id' to 'prod_id' to match the actual products table column
+    $stmt = $conn->prepare("SELECT name, stock FROM products WHERE prod_id = ?");
     $stmt->bind_param('i', $productId);
     $stmt->execute();
     $product = $stmt->get_result()->fetch_assoc();
