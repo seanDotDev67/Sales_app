@@ -1,63 +1,78 @@
 <?php
-    session_start();
-    include 'connection.php';
+session_start();
+include 'connection.php';
 
-    if (!isset($_SESSION['user_id'])) {
-        header("Location: login.php");
-        exit();
-    }
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
 
-    $userId = (int)$_SESSION['user_id'];
+$userId = (int)$_SESSION['user_id'];
 
-    // Verify the user still exists
-    $stmt = $conn->prepare("SELECT id FROM users WHERE id = ?");
-    $stmt->bind_param('i', $userId);
-    $stmt->execute();
+// Get user role from database (same logic as index.php)
+// 1 = Admin, 2 = Customer
+$stmt = $conn->prepare("SELECT role_id FROM users WHERE id = ? LIMIT 1");
+$stmt->bind_param('i', $userId);
+$stmt->execute();
+$userRoleData = $stmt->get_result()->fetch_assoc();
 
-    if (!$stmt->get_result()->fetch_assoc()) {
-        session_unset();
-        session_destroy();
-        header("Location: login.php");
-        exit();
-    }
+if (!$userRoleData) {
+    session_unset();
+    session_destroy();
+    header("Location: login.php");
+    exit();
+}
 
-    // Get cart items
-    $stmt = $conn->prepare("
-        SELECT cd.cart_detail_id, cd.prod_id, cd.cqty, p.name, p.price, p.stock, p.image
-        FROM cart_master cm
-        JOIN cart_details cd ON cd.cart_id = cm.cart_id
-        JOIN products p ON p.id = cd.prod_id
-        WHERE cm.user_id = ?
-        ORDER BY cd.prod_id
-    ");
+$_SESSION['role_id'] = (int)($userRoleData['role_id'] ?? 2);
+$isAdmin = ($_SESSION['role_id'] === 1);
 
-    $stmt->bind_param('i', $userId);
-    $stmt->execute();
-    $items = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+// Get cart items
+$stmt = $conn->prepare("
+    SELECT cd.cart_detail_id, cd.prod_id, cd.cqty, p.name, p.price, p.stock, p.image
+    FROM cart_master cm
+    JOIN cart_details cd ON cd.cart_id = cm.cart_id
+    JOIN products p ON p.id = cd.prod_id
+    WHERE cm.user_id = ?
+    ORDER BY cd.prod_id
+");
+$stmt->bind_param('i', $userId);
+$stmt->execute();
+$items = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 
-    $total     = 0;
-    $cartCount = 0;
-    foreach ($items as $it) {
-        $total     += $it['price'] * $it['cqty'];
-        $cartCount += (int)$it['cqty'];
-    }
+$total     = 0;
+$cartCount = 0;
+foreach ($items as $it) {
+    $total     += $it['price'] * $it['cqty'];
+    $cartCount += (int)$it['cqty'];
+}
 
-    $flash = $_SESSION['flash'] ?? null;
-    unset($_SESSION['flash']);
+$flash = $_SESSION['flash'] ?? null;
+unset($_SESSION['flash']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Cart</title>
+
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-    <title>My Cart</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body class="bg-light">
+
+<?php include 'sidebar.php'; ?>
+
+<div class="main-content">
+
+    <!-- ===== SAME NAVBAR ON EVERY PAGE ===== -->
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
-        <div class="container">
-            <a class="navbar-brand fw-bold" href="index.php"><i class="bi bi-speedometer2 me-2"></i>Sales System</a>
+        <div class="container-fluid px-4">
+            <a class="navbar-brand fw-bold" href="index.php">
+                <i class="bi bi-speedometer2 me-2"></i>Sales System
+            </a>
+
             <div class="d-flex align-items-center">
                 <a href="cart.php" class="btn btn-outline-light btn-sm me-3 position-relative">
                     <i class="bi bi-cart3 me-1"></i>Cart
@@ -67,12 +82,21 @@
                         </span>
                     <?php endif; ?>
                 </a>
-                <a href="logout.php" class="btn btn-outline-danger btn-sm"><i class="bi bi-box-arrow-right me-1"></i>Logout</a>
+
+                <span class="navbar-text text-white me-3 d-none d-sm-inline">
+                    Welcome,
+                    <strong class="text-primary"><?= htmlspecialchars($_SESSION['username'] ?? 'User') ?></strong>
+                </span>
+
+                <a href="logout.php" class="btn btn-outline-danger btn-sm">
+                    <i class="bi bi-box-arrow-right me-1"></i>Logout
+                </a>
             </div>
         </div>
     </nav>
 
     <div class="container py-4">
+
         <?php if ($flash): ?>
             <div class="alert alert-<?= htmlspecialchars($flash['type']) ?> alert-dismissible fade show">
                 <?= htmlspecialchars($flash['message']) ?>
@@ -87,11 +111,14 @@
                 <i class="bi bi-cart-x fs-1 d-block mb-2"></i>
                 Your cart is empty.
                 <div class="mt-3">
-                    <a href="index.php" class="btn btn-primary"><i class="bi bi-arrow-left me-1"></i>Continue Shopping</a>
+                    <a href="index.php" class="btn btn-primary">
+                        <i class="bi bi-arrow-left me-1"></i>Continue Shopping
+                    </a>
                 </div>
             </div>
         <?php else: ?>
             <div class="row g-4">
+
                 <!-- Items table -->
                 <div class="col-lg-8">
                     <div class="card shadow-sm">
@@ -99,8 +126,7 @@
                             <table class="table align-middle mb-0">
                                 <thead class="table-light">
                                     <tr>
-                                        <th>C_ID</th>
-                                        <th>Product ID</th> 
+                                        <th>#</th>
                                         <th>Product</th>
                                         <th>Price</th>
                                         <th style="width: 180px;">Quantity</th>
@@ -109,19 +135,22 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <?php  $no = 1;  foreach ($items as $it): ?>
+                                    <?php $no = 1; foreach ($items as $it): ?>
                                         <tr>
                                             <td><?= $no++ ?></td>
-                                            <td><?= (int)$it['prod_id'] ?></td> 
                                             <td>
                                                 <div class="d-flex align-items-center gap-2">
                                                     <img src="<?= htmlspecialchars($it['image'] ?: 'uploads/placeholder.svg') ?>"
                                                          onerror="this.onerror=null; this.src='uploads/placeholder.svg';"
-                                                         class="rounded" style="width: 50px; height: 50px; object-fit: cover;" alt="">
+                                                         class="rounded"
+                                                         style="width: 50px; height: 50px; object-fit: cover;"
+                                                         alt="<?= htmlspecialchars($it['name']) ?>">
                                                     <div>
                                                         <?= htmlspecialchars($it['name']) ?>
                                                         <?php if ((int)$it['cqty'] > (int)$it['stock']): ?>
-                                                            <div class="text-danger small">Only <?= (int)$it['stock'] ?> left in stock!</div>
+                                                            <div class="text-danger small">
+                                                                Only <?= (int)$it['stock'] ?> left in stock!
+                                                            </div>
                                                         <?php endif; ?>
                                                     </div>
                                                 </div>
@@ -165,11 +194,13 @@
                         </div>
                         <div class="card-body">
                             <div class="d-flex justify-content-between mb-2">
-                                <span>Items</span><span><?= $cartCount ?></span>
+                                <span>Items</span>
+                                <span><?= $cartCount ?></span>
                             </div>
                             <hr>
                             <div class="d-flex justify-content-between fs-5 fw-bold mb-3">
-                                <span>Total</span><span>$<?= number_format($total, 2) ?></span>
+                                <span>Total</span>
+                                <span>$<?= number_format($total, 2) ?></span>
                             </div>
                             <form action="checkout.php" method="POST"
                                   onsubmit="return confirm('Place this order for $<?= number_format($total, 2) ?>?');">
@@ -183,10 +214,14 @@
                         </div>
                     </div>
                 </div>
+
             </div>
         <?php endif; ?>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
 </body>
 </html>
