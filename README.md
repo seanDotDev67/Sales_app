@@ -1,4 +1,4 @@
-# 🛒 Sales App
+# 🛒 Sales App project ni Sean
 
 > **A simple PHP-based Sales Management System** for managing products, shopping carts, checkout, and user authentication.
 
