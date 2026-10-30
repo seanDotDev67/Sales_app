@@ -1,14 +1,14 @@
 <?php
-session_start();
-include 'connection.php';
+require_once 'auth.php';
 
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
+if (!$canManageProducts) {
+    $_SESSION['flash'] = ['type' => 'danger', 'message' => 'Only admins and sellers can add products.'];
+    header("Location: my_products.php");
     exit();
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    header("Location: index.php");
+    header("Location: my_products.php");
     exit();
 }
 
@@ -16,6 +16,17 @@ $name        = trim($_POST['name'] ?? '');
 $description = trim($_POST['description'] ?? '');
 $price       = filter_input(INPUT_POST, 'price', FILTER_VALIDATE_FLOAT);
 $stock       = filter_input(INPUT_POST, 'stock', FILTER_VALIDATE_INT);
+
+$ownerId = $userId;
+if ($isSuperAdmin && isset($_POST['owner_id'])) {
+    $candidate = (int)$_POST['owner_id'];
+    $chk = $conn->prepare("SELECT id FROM users WHERE id = ? AND role_id IN (1,3) AND status = 'approved'");
+    $chk->bind_param('i', $candidate);
+    $chk->execute();
+    if ($chk->get_result()->fetch_row()) {
+        $ownerId = $candidate;
+    }
+}
 
 $errors = [];
 
@@ -68,12 +79,12 @@ if ($errors) {
         'message' => implode(' ', $errors)
     ];
 
-    header("Location: index.php");
+    header("Location: my_products.php");
     exit();
 }
 
 $stmt = $conn->prepare(
-    "INSERT INTO products (name, description, price, stock, image) VALUES (?, ?, ?, ?, ?)"
+    "INSERT INTO products (owner_id, name, description, price, stock, image) VALUES (?, ?, ?, ?, ?, ?)"
 );
 
 /*
@@ -83,7 +94,7 @@ $stmt = $conn->prepare(
     i = integer
     s = string
 */
-$stmt->bind_param('ssdis', $name, $description, $price, $stock, $imagePath);
+$stmt->bind_param('issdis', $ownerId, $name, $description, $price, $stock, $imagePath);
 
 $stmt->execute();
 
@@ -92,6 +103,6 @@ $_SESSION['flash'] = [
     'message' => "Product \"{$name}\" added."
 ];
 
-header("Location: index.php");
+header("Location: my_products.php");
 exit();
 ?>

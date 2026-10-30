@@ -1,32 +1,23 @@
 <?php
-    session_start();
-    include 'connection.php';
+    require_once 'auth.php';
 
-    if (!isset($_SESSION['user_id'])) {
-        header("Location: login.php");
-        exit();
-    }
-
-    $stmt = $conn->prepare("SELECT id FROM users WHERE id = ?");
-    $stmt->bind_param('i', $_SESSION['user_id']);
-    $stmt->execute();
-
-    if (!$stmt->get_result()->fetch_assoc()) {
-        session_unset();
-        session_destroy();
-        header("Location: login.php");
-        exit();
-    }
-
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    if (!$isCustomer || $_SERVER['REQUEST_METHOD'] !== 'POST') {
         header("Location: cart.php");
         exit();
     }
 
-    $userId = (int)$_SESSION['user_id'];
+    $selected = array_values(array_unique(array_filter(
+        array_map('intval', (array)($_POST['selected'] ?? [])),
+        fn($v) => $v > 0
+    )));
+
     $transactionActive = false;
 
     try {
+        if (empty($selected)) {
+            throw new RuntimeException('Select at least one product to buy.');
+        }
+
         $conn->begin_transaction();
         $transactionActive = true;
 
@@ -42,19 +33,20 @@
             throw new RuntimeException('Your cart is empty.');
         }
 
+        $placeholders = implode(',', array_fill(0, count($selected), '?'));
         $stmt = $conn->prepare("
             SELECT cd.prod_id, cd.cqty, p.name, p.price, p.stock
             FROM cart_details cd
             JOIN products p ON p.id = cd.prod_id
-            WHERE cd.cart_id = ?
+            WHERE cd.cart_id = ? AND cd.prod_id IN ($placeholders)
             FOR UPDATE
         ");
-        $stmt->bind_param('i', $cartId);
+        $stmt->bind_param('i' . str_repeat('i', count($selected)), $cartId, ...$selected);
         $stmt->execute();
         $items = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 
         if (empty($items)) {
-            throw new RuntimeException('Your cart is empty.');
+            throw new RuntimeException('The selected products are not in your cart.');
         }
 
         $total = 0;
@@ -67,7 +59,7 @@
             $total += $it['price'] * $it['cqty'];
         }
 
-        $stmt = $conn->prepare("INSERT INTO orders (user_id, total) VALUES (?, ?)");
+        $stmt = $conn->prepare("INSERT INTO order_master (user_id, total) VALUES (?, ?)");
         $stmt->bind_param('id', $userId, $total);
         $stmt->execute();
         $orderId = (int)$conn->insert_id;
@@ -87,9 +79,13 @@
             }
         }
 
-        $stmt = $conn->prepare("DELETE FROM cart_details WHERE cart_id = ?");
-        $stmt->bind_param('i', $cartId);
+        $placeholders = implode(',', array_fill(0, count($selected), '?'));
+        $stmt = $conn->prepare("DELETE FROM cart_details WHERE cart_id = ? AND prod_id IN ($placeholders)");
+        $stmt->bind_param('i' . str_repeat('i', count($selected)), $cartId, ...$selected);
         $stmt->execute();
+
+        // A cart with no items is removed; the next add creates a new cart_master
+        $conn->query("DELETE FROM cart_master WHERE cart_id NOT IN (SELECT cart_id FROM cart_details)");
 
         $conn->commit();
         $transactionActive = false;
@@ -98,7 +94,7 @@
             'type'    => 'success',
             'message' => "Order #$orderId placed successfully! Total: $" . number_format($total, 2)
         ];
-        header("Location: index.php");
+        header("Location: orders.php");
         exit();
 
     } catch (Throwable $e) {

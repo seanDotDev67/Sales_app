@@ -1,259 +1,181 @@
 <?php
-session_start();
-include 'connection.php';
+require_once 'auth.php';
 
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
+// Customers land on the storefront; admins and owners get the dashboard.
+if ($isCustomer) {
+    require 'shop.php';
     exit();
 }
 
-$userId = (int)$_SESSION['user_id'];
+$ownerFilter = $isSuperAdmin ? '' : ' AND p.owner_id = ' . $userId;
+$stats = [];
 
-// Get user role from database
-// 1 = Admin, 2 = Customer
-$stmt = $conn->prepare("SELECT role_id FROM users WHERE id = ? LIMIT 1");
-$stmt->bind_param('i', $userId);
-$stmt->execute();
-$userRoleData = $stmt->get_result()->fetch_assoc();
+if ($isSuperAdmin) {
+    $stats['users']    = (int)$conn->query("SELECT COUNT(*) FROM users")->fetch_row()[0];
+    $stats['pending']  = (int)$conn->query("SELECT COUNT(*) FROM users WHERE status = 'pending'")->fetch_row()[0];
+    $stats['products'] = (int)$conn->query("SELECT COUNT(*) FROM products")->fetch_row()[0];
+    $stats['orders']   = (int)$conn->query("SELECT COUNT(*) FROM order_master")->fetch_row()[0];
+    $stats['revenue']  = (float)$conn->query("SELECT COALESCE(SUM(total), 0) FROM order_master WHERE status <> 'cancelled'")->fetch_row()[0];
 
-if (!$userRoleData) {
-    session_unset();
-    session_destroy();
-    header("Location: login.php");
-    exit();
+    $pending = $conn->query("
+        SELECT id, f_name, l_name, username, email, role_id, created_at
+        FROM users WHERE status = 'pending' ORDER BY id DESC LIMIT 5
+    ")->fetch_all(MYSQLI_ASSOC);
+} else {
+    $stats['products'] = (int)$conn->query("SELECT COUNT(*) FROM products WHERE owner_id = $userId")->fetch_row()[0];
+    $stats['low']      = (int)$conn->query("SELECT COUNT(*) FROM products WHERE owner_id = $userId AND stock <= 5")->fetch_row()[0];
+    $stats['orders']   = (int)$conn->query("
+        SELECT COUNT(DISTINCT od.order_id) FROM order_details od
+        JOIN products p ON p.id = od.prod_id WHERE p.owner_id = $userId
+    ")->fetch_row()[0];
+    $stats['revenue']  = (float)$conn->query("
+        SELECT COALESCE(SUM(od.qty * od.price), 0) FROM order_details od
+        JOIN products p ON p.id = od.prod_id
+        JOIN order_master om ON om.order_id = od.order_id
+        WHERE p.owner_id = $userId AND om.status <> 'cancelled'
+    ")->fetch_row()[0];
+    $pending = [];
 }
 
-$_SESSION['role_id'] = (int)($userRoleData['role_id'] ?? 2);
-$isAdmin = ($_SESSION['role_id'] === 1);
+$recent = $conn->query("
+    SELECT om.order_id, om.status, om.created_at, u.username,
+           SUM(od.qty * od.price) AS line_total
+    FROM order_master om
+    JOIN order_details od ON od.order_id = om.order_id
+    JOIN products p ON p.id = od.prod_id
+    JOIN users u ON u.id = om.user_id
+    WHERE 1=1 $ownerFilter
+    GROUP BY om.order_id, om.status, om.created_at, u.username
+    ORDER BY om.order_id DESC LIMIT 6
+")->fetch_all(MYSQLI_ASSOC);
 
-// Get products
-$result = $conn->query("
-    SELECT id, name, description, price, stock, image 
-    FROM products 
-    ORDER BY id DESC
-");
-$products = $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
+$lowStock = $conn->query("
+    SELECT p.id, p.name, p.stock FROM products p
+    WHERE p.stock <= 5 $ownerFilter ORDER BY p.stock ASC LIMIT 6
+")->fetch_all(MYSQLI_ASSOC);
 
-// Get cart count
-$stmt = $conn->prepare("
-    SELECT COALESCE(SUM(cd.cqty), 0)
-    FROM cart_master cm
-    JOIN cart_details cd ON cd.cart_id = cm.cart_id
-    WHERE cm.user_id = ?
-");
-$stmt->bind_param('i', $userId);
-$stmt->execute();
-$row = $stmt->get_result()->fetch_row();
-$cartCount = (int)($row[0] ?? 0);
-
+$pageTitle = 'Dashboard';
+$pageCrumb = $isSuperAdmin ? 'Administration' : 'My Business';
 $flash = $_SESSION['flash'] ?? null;
 unset($_SESSION['flash']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Products</title>
-
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-    <link rel="stylesheet" href="style.css">
-
-    <style>
-        .product-card {
-            transition: transform .3s ease, box-shadow .3s ease;
-            overflow: hidden;
-        }
-        .product-card:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 1rem 2rem rgba(0, 0, 0, .18) !important;
-        }
-        .product-card .card-img-top { transition: transform .4s ease; }
-        .product-card:hover .card-img-top { transform: scale(1.08); }
-        .product-card .card-title { transition: color .3s ease; }
-        .product-card:hover .card-title { color: #0d6efd; }
-        .product-card .badge { transition: transform .3s ease; }
-        .product-card:hover .badge { transform: scale(1.1); }
-        .product-card .btn { transition: all .25s ease; }
-        .product-card .btn:hover { transform: translateY(-2px); }
-        .product-card .form-control:focus { box-shadow: 0 0 0 .2rem rgba(13, 110, 253, .25); }
-    </style>
-</head>
-<body class="bg-light">
-
+<head><?php include 'head.php'; ?></head>
+<body>
 <?php include 'sidebar.php'; ?>
 
 <div class="main-content">
+    <?php include 'topbar.php'; ?>
 
-    <!-- ===== SAME NAVBAR ON EVERY PAGE ===== -->
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
-        <div class="container-fluid px-4">
-            <a class="navbar-brand fw-bold" href="index.php">
-                <i class="bi bi-speedometer2 me-2"></i>Sales System
-            </a>
+    <div class="page-body">
+        <?php include 'flash.php'; ?>
 
-            <div class="d-flex align-items-center">
-                <a href="cart.php" class="btn btn-outline-light btn-sm me-3 position-relative">
-                    <i class="bi bi-cart3 me-1"></i>Cart
-                    <?php if ($cartCount > 0): ?>
-                        <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">
-                            <?= $cartCount > 99 ? '99+' : $cartCount ?>
-                        </span>
-                    <?php endif; ?>
-                </a>
-
-                <span class="navbar-text text-white me-3 d-none d-sm-inline">
-                    Welcome,
-                    <strong class="text-primary"><?= htmlspecialchars($_SESSION['username'] ?? 'User') ?></strong>
-                </span>
+        <div class="section-head">
+            <div>
+                <h2><?= $isSuperAdmin ? 'System overview' : 'Business overview' ?></h2>
+                <p><?= $isSuperAdmin ? 'Accounts, catalog and sales across the whole system.' : 'Your products and the orders placed for them.' ?></p>
             </div>
-        </div>
-    </nav>
-
-    <div class="container py-4">
-
-        <?php if ($flash): ?>
-            <div class="alert alert-<?= htmlspecialchars($flash['type']) ?> alert-dismissible fade show">
-                <?= htmlspecialchars($flash['message']) ?>
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-        <?php endif; ?>
-
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2 class="mb-0"><i class="bi bi-box-seam me-2"></i>Products</h2>
+            <a href="my_products.php?add=1" class="btn btn-primary"><i class="bi bi-plus-lg me-1"></i>Add product</a>
         </div>
 
-        <?php if (empty($products)): ?>
-            <div class="text-center text-muted py-5">
-                <i class="bi bi-inbox fs-1 d-block mb-2"></i>
-                No products yet.
-                <?php if ($isAdmin): ?>
-                    Click <strong>Add Product</strong> to create one.
-                <?php endif; ?>
-            </div>
-        <?php else: ?>
-            <div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-lg-4 g-4">
-                <?php foreach ($products as $p): ?>
-                    <div class="col">
-                        <div class="card h-100 shadow-sm product-card">
-                            <img src="<?= htmlspecialchars($p['image'] ?: 'uploads/placeholder.svg') ?>"
-                                 onerror="this.onerror=null; this.src='uploads/placeholder.svg';"
-                                 class="card-img-top"
-                                 alt="<?= htmlspecialchars($p['name']) ?>"
-                                 style="height: 180px; object-fit: cover;">
-                            <div class="card-body d-flex flex-column">
-                                <div class="d-flex justify-content-between align-items-start mb-1">
-                                    <h5 class="card-title mb-0"><?= htmlspecialchars($p['name']) ?></h5>
-                                    <span class="badge text-bg-success">$<?= number_format((float)$p['price'], 2) ?></span>
-                                </div>
-                                <p class="card-text text-muted small flex-grow-1">
-                                    <?= htmlspecialchars($p['description']) ?>
-                                </p>
-                                <p class="mb-2">
-                                    <?php if ((int)$p['stock'] > 0): ?>
-                                        <span class="badge text-bg-secondary">
-                                            <i class="bi bi-stack me-1"></i><?= (int)$p['stock'] ?> in stock
-                                        </span>
-                                    <?php else: ?>
-                                        <span class="badge text-bg-danger">Out of stock</span>
-                                    <?php endif; ?>
-                                </p>
-                                <div class="mt-auto">
-                                    <?php if ($isAdmin): ?>
-                                        <a href="edit_product.php?id=<?= (int)$p['id'] ?>"
-                                           class="btn btn-outline-secondary btn-sm w-100 mb-2">
-                                            <i class="bi bi-pencil me-1"></i>Edit Product
-                                        </a>
-                                    <?php endif; ?>
-                                    <form action="add_to_cart.php" method="POST" class="d-flex gap-2">
-                                        <input type="hidden" name="product_id" value="<?= (int)$p['id'] ?>">
-                                        <input type="number" name="quantity" value="1" min="1"
-                                               max="<?= (int)$p['stock'] ?>"
-                                               class="form-control form-control-sm" style="width: 70px;"
-                                               <?= (int)$p['stock'] === 0 ? 'disabled' : '' ?>>
-                                        <button type="submit" class="btn btn-primary btn-sm flex-grow-1"
-                                                <?= (int)$p['stock'] === 0 ? 'disabled' : '' ?>>
-                                            <i class="bi bi-cart-plus me-1"></i>Add to Cart
-                                        </button>
-                                    </form>
-                                </div>
-                            </div>
-                        </div>
+        <div class="row g-3 mb-4 reveal">
+            <?php if ($isSuperAdmin): ?>
+                <div class="col-6 col-xl"><div class="card stat"><div class="icon"><i class="bi bi-people"></i></div>
+                    <div><div class="num"><?= $stats['users'] ?></div><div class="lbl">Users</div></div></div></div>
+                <div class="col-6 col-xl"><div class="card stat"><div class="icon amber"><i class="bi bi-hourglass-split"></i></div>
+                    <div><div class="num"><?= $stats['pending'] ?></div><div class="lbl">Pending</div></div></div></div>
+            <?php else: ?>
+                <div class="col-6 col-xl"><div class="card stat"><div class="icon amber"><i class="bi bi-exclamation-triangle"></i></div>
+                    <div><div class="num"><?= $stats['low'] ?></div><div class="lbl">Low stock</div></div></div></div>
+            <?php endif; ?>
+            <div class="col-6 col-xl"><div class="card stat"><div class="icon slate"><i class="bi bi-box-seam"></i></div>
+                <div><div class="num"><?= $stats['products'] ?></div><div class="lbl">Products</div></div></div></div>
+            <div class="col-6 col-xl"><div class="card stat"><div class="icon"><i class="bi bi-receipt"></i></div>
+                <div><div class="num"><?= $stats['orders'] ?></div><div class="lbl">Orders</div></div></div></div>
+            <div class="col-12 col-xl"><div class="card stat"><div class="icon green"><i class="bi bi-currency-dollar"></i></div>
+                <div><div class="num">$<?= number_format($stats['revenue'], 2) ?></div><div class="lbl">Revenue</div></div></div></div>
+        </div>
+
+        <div class="row g-4">
+            <div class="col-lg-7">
+                <div class="card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        Recent orders <a href="admin_orders.php" class="small text-decoration-none">View all</a>
                     </div>
-                <?php endforeach; ?>
+                    <?php if (!$recent): ?>
+                        <div class="empty-state"><i class="bi bi-inbox"></i>No orders yet.</div>
+                    <?php else: ?>
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle mb-0">
+                                <thead><tr><th>Order</th><th>Customer</th><th>Date</th><th>Status</th><th class="text-end">Amount</th></tr></thead>
+                                <tbody>
+                                <?php foreach ($recent as $o): ?>
+                                    <tr>
+                                        <td class="fw-semibold">#<?= (int)$o['order_id'] ?></td>
+                                        <td><?= htmlspecialchars($o['username']) ?></td>
+                                        <td class="text-muted"><?= htmlspecialchars(date('M j, g:i A', strtotime($o['created_at']))) ?></td>
+                                        <td><span class="badge text-bg-<?= $o['status'] === 'completed' ? 'success' : ($o['status'] === 'cancelled' ? 'danger' : 'primary') ?>"><?= htmlspecialchars(ucfirst($o['status'])) ?></span></td>
+                                        <td class="text-end">$<?= number_format((float)$o['line_total'], 2) ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    <?php endif; ?>
+                </div>
             </div>
-        <?php endif; ?>
-    </div>
 
-    <?php if ($isAdmin): ?>
-        <!-- Add Product Modal -->
-        <div class="modal fade" id="addProductModal" tabindex="-1" aria-labelledby="addProductModalLabel" aria-hidden="true">
-            <div class="modal-dialog modal-dialog-centered">
-                <div class="modal-content">
-                    <form action="add_product.php" method="POST" enctype="multipart/form-data">
-                        <div class="modal-header">
-                            <h5 class="modal-title" id="addProductModalLabel">
-                                <i class="bi bi-plus-circle me-2"></i>Add New Product
-                            </h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            <div class="col-lg-5">
+                <?php if ($isSuperAdmin): ?>
+                    <div class="card mb-4">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            Pending approvals <a href="manage_users.php" class="small text-decoration-none">Manage</a>
                         </div>
-                        <div class="modal-body">
-                            <div class="mb-3">
-                                <label for="productName" class="form-label">Product Name</label>
-                                <input type="text" class="form-control" id="productName" name="name" required maxlength="100">
-                            </div>
-                            <div class="row">
-                                <div class="col-6 mb-3">
-                                    <label for="productPrice" class="form-label">Price ($)</label>
-                                    <input type="number" class="form-control" id="productPrice" name="price"
-                                           step="0.01" min="0" required>
-                                </div>
-                                <div class="col-6 mb-3">
-                                    <label for="productStock" class="form-label">Stock Qty</label>
-                                    <input type="number" class="form-control" id="productStock" name="stock"
-                                           min="0" value="0" required>
-                                </div>
-                            </div>
-                            <div class="mb-3">
-                                <label for="productDescription" class="form-label">Description</label>
-                                <textarea class="form-control" id="productDescription" name="description"
-                                          rows="3" maxlength="500"></textarea>
-                            </div>
-                            <div class="mb-1">
-                                <label for="productImage" class="form-label">Product Image</label>
-                                <input type="file" class="form-control" id="productImage" name="image"
-                                       accept="image/jpeg,image/png,image/webp">
-                                <div class="form-text">JPG, PNG or WebP — max 2MB. Leave empty to use the default image.</div>
-                            </div>
-                        </div>
-                        <div class="modal-footer">
-                            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-                            <button type="submit" class="btn btn-primary">
-                                <i class="bi bi-save me-1"></i>Save Product
-                            </button>
-                        </div>
-                    </form>
+                        <?php if (!$pending): ?>
+                            <div class="empty-state py-4"><i class="bi bi-check2-circle"></i>No accounts waiting.</div>
+                        <?php else: ?>
+                            <ul class="list-group list-group-flush">
+                                <?php foreach ($pending as $u): ?>
+                                    <li class="list-group-item d-flex justify-content-between align-items-center py-3">
+                                        <div>
+                                            <div class="fw-semibold"><?= htmlspecialchars($u['f_name'] . ' ' . $u['l_name']) ?></div>
+                                            <div class="text-muted small"><?= htmlspecialchars($u['username']) ?> · <?= (int)$u['role_id'] === 3 ? 'Owner' : 'Customer' ?></div>
+                                        </div>
+                                        <form method="POST" action="manage_users.php" class="d-flex gap-1">
+                                            <input type="hidden" name="action" value="update_status">
+                                            <input type="hidden" name="user_id" value="<?= (int)$u['id'] ?>">
+                                            <input type="hidden" name="return" value="dashboard.php">
+                                            <button name="status" value="approved" class="btn btn-success btn-sm">Approve</button>
+                                            <button name="status" value="denied" class="btn btn-outline-danger btn-sm">Decline</button>
+                                        </form>
+                                    </li>
+                                <?php endforeach; ?>
+                            </ul>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
+
+                <div class="card">
+                    <div class="card-header">Low stock</div>
+                    <?php if (!$lowStock): ?>
+                        <div class="empty-state py-4"><i class="bi bi-check2-circle"></i>All products are well stocked.</div>
+                    <?php else: ?>
+                        <ul class="list-group list-group-flush">
+                            <?php foreach ($lowStock as $p): ?>
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <a href="edit_product.php?id=<?= (int)$p['id'] ?>" class="text-decoration-none text-reset"><?= htmlspecialchars($p['name']) ?></a>
+                                    <span class="badge text-bg-<?= (int)$p['stock'] === 0 ? 'danger' : 'warning' ?>"><?= (int)$p['stock'] ?> left</span>
+                                </li>
+                            <?php endforeach; ?>
+                        </ul>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>
-    <?php endif; ?>
-
+    </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-    <?php if ($isAdmin && isset($_GET['add_product'])): ?>
-        var addProductModalEl = document.getElementById('addProductModal');
-        if (addProductModalEl) {
-            var addProductModal = bootstrap.Modal.getOrCreateInstance(addProductModalEl);
-            addProductModal.show();
-        }
-    <?php endif; ?>
-});
-</script>
-
 </body>
 </html>

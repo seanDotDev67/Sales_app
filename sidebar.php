@@ -5,98 +5,76 @@ if (session_status() === PHP_SESSION_NONE) {
 
 $sidebarCurrentPage = basename($_SERVER['SCRIPT_NAME'] ?? '');
 $sidebarRoleId = (int)($_SESSION['role_id'] ?? 2);
-$sidebarIsAdmin = ($sidebarRoleId === 1);
+$sidebarUser   = $_SESSION['username'] ?? 'User';
+$sidebarRoleName = [1 => 'Administrator', 2 => 'Customer', 3 => 'Owner'][$sidebarRoleId] ?? 'User';
 
 if (!function_exists('sidebarLinkClass')) {
     function sidebarLinkClass(string $page): string
     {
         global $sidebarCurrentPage;
-
-        if ($page === $sidebarCurrentPage) {
-            return 'nav-link active';
-        }
-
-        return 'nav-link text-white';
+        return $page === $sidebarCurrentPage ? 'nav-link active' : 'nav-link';
     }
 }
+
+if (!function_exists('sidebarItem')) {
+    function sidebarItem(string $href, string $icon, string $label): void
+    {
+        echo '<li class="nav-item"><a href="' . $href . '" class="' . sidebarLinkClass($href) . '">'
+           . '<i class="bi ' . $icon . '"></i><span>' . $label . '</span></a></li>';
+    }
+}
+
+include __DIR__ . '/welcome_splash.php';
 ?>
 
-<aside class="sidebar d-flex flex-column p-3 bg-dark text-white">
+<aside class="sidebar">
 
-    <a href="index.php" class="d-flex align-items-center mb-3 text-white text-decoration-none">
-        <i class="bi bi-cart3 fs-3 me-2"></i>
-        <span class="fs-5 fw-bold">Sales App</span>
+    <a href="index.php" class="brand">
+        <span class="brand-mark"><i class="bi bi-bar-chart-line"></i></span>
+        <span>
+            <span class="brand-name d-block">Sales Manager</span>
+            <span class="brand-sub">Operations</span>
+        </span>
     </a>
 
-    <hr>
+    <button class="menu-toggle d-md-none" type="button" data-bs-toggle="collapse" data-bs-target="#sideMenu" aria-label="Toggle menu">
+        <i class="bi bi-list"></i>
+    </button>
 
-    <ul class="nav nav-pills flex-column mb-auto">
-
-        <li class="nav-item">
-            <a href="index.php" class="<?= sidebarLinkClass('index.php') ?>">
-                <i class="bi bi-box-seam me-2"></i>
-                Products
-            </a>
-        </li>
-
-        <li class="nav-item">
-            <a href="cart.php" class="<?= sidebarLinkClass('cart.php') ?>">
-                <i class="bi bi-cart-check me-2"></i>
-                My Cart
-            </a>
-        </li>
-
-        <li class="nav-item">
-            <a href="orders.php" class="<?= sidebarLinkClass('orders.php') ?>">
-                <i class="bi bi-receipt me-2"></i>
-                My Orders
-            </a>
-        </li>
-
-        <?php if ($sidebarIsAdmin): ?>
-
-            <li class="mt-3 mb-1 px-3 text-uppercase small text-secondary">
-                Admin
-            </li>
-
-            <li class="nav-item">
-                <a href="index.php?add_product=1" class="nav-link text-white">
-                    <i class="bi bi-plus-circle me-2"></i>
-                    Add Product
-                </a>
-            </li>
-
-            <li class="nav-item">
-                <a href="admin_products.php" class="<?= sidebarLinkClass('admin_products.php') ?>">
-                    <i class="bi bi-gear me-2"></i>
-                    Manage Products
-                </a>
-            </li>
-
-            <li class="nav-item">
-                <a href="admin_users.php" class="<?= sidebarLinkClass('admin_users.php') ?>">
-                    <i class="bi bi-people me-2"></i>
-                    Manage Users
-                </a>
-            </li>
-
-            <li class="nav-item">
-                <a href="admin_orders.php" class="<?= sidebarLinkClass('admin_orders.php') ?>">
-                    <i class="bi bi-list-check me-2"></i>
-                    All Orders
-                </a>
-            </li>
-
+    <div class="collapse d-md-flex flex-column flex-grow-1 w-100" id="sideMenu">
+    <ul class="nav flex-column">
+        <?php if ($sidebarRoleId === 2): ?>
+            <li class="nav-label">Shop</li>
+            <?php
+            sidebarItem('index.php', 'bi-grid', 'Products');
+            sidebarItem('cart.php', 'bi-cart3', 'My Cart');
+            sidebarItem('orders.php', 'bi-receipt', 'My Orders');
+            ?>
+        <?php else: ?>
+            <li class="nav-label"><?= $sidebarRoleId === 1 ? 'Administration' : 'My Business' ?></li>
+            <?php
+            sidebarItem('index.php', 'bi-speedometer2', 'Dashboard');
+            sidebarItem('my_products.php', 'bi-box-seam', $sidebarRoleId === 1 ? 'All Products' : 'My Products');
+            sidebarItem('admin_orders.php', 'bi-list-check', $sidebarRoleId === 1 ? 'All Orders' : 'Orders');
+            if ($sidebarRoleId === 1) {
+                sidebarItem('manage_users.php', 'bi-people', 'Users &amp; Approvals');
+            }
+            ?>
+            <li class="nav-label">Storefront</li>
+            <?php sidebarItem('shop.php', 'bi-grid', 'Browse Catalog'); ?>
         <?php endif; ?>
-
     </ul>
 
-    <hr>
-
-    <div class="d-grid">
-       <a href="logout.php" class="btn btn-outline-danger btn-sm">
-             <i class="bi bi-box-arrow-right me-1"></i>Logout
-        </a>
+    <div class="user-box">
+        <div class="user-chip">
+            <span class="avatar"><?= htmlspecialchars(substr($sidebarUser, 0, 1)) ?></span>
+            <span>
+                <span class="user-name d-block"><?= htmlspecialchars($sidebarUser) ?></span>
+                <span class="user-role"><?= htmlspecialchars($sidebarRoleName) ?></span>
+            </span>
+        </div>
+        <a href="logout.php" class="btn-logout"><i class="bi bi-box-arrow-right"></i>Sign out</a>
+    </div>
     </div>
 
 </aside>

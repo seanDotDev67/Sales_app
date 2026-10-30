@@ -1,9 +1,11 @@
 <?php
-session_start();
-include 'connection.php';
+require_once 'auth.php';
 
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
+// Only customers can add to cart
+// (Admin = 1, Customer = 2, Seller = 3)
+if (!$isCustomer) {
+    $_SESSION['flash'] = ['type' => 'danger', 'message' => 'Only customers can use the cart.'];
+    header("Location: index.php");
     exit();
 }
 
@@ -12,7 +14,6 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit();
 }
 
-$userId    = (int)$_SESSION['user_id'];
 $productId = filter_input(INPUT_POST, 'product_id', FILTER_VALIDATE_INT);
 $quantity  = filter_input(INPUT_POST, 'quantity', FILTER_VALIDATE_INT);
 
@@ -33,6 +34,14 @@ try {
     $stmt->bind_param('i', $productId);
     $stmt->execute();
     $product = $stmt->get_result()->fetch_assoc();
+
+    $stmt = $conn->prepare("SELECT status FROM users WHERE id = ? LIMIT 1");
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
+    $userStatus = $stmt->get_result()->fetch_assoc();
+    if (!$userStatus || ($userStatus['status'] ?? 'approved') !== 'approved') {
+        throw new RuntimeException('Your account is not approved for shopping.');
+    }
 
     if (!$product) {
         throw new RuntimeException('Product not found.');

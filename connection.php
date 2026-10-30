@@ -1,7 +1,7 @@
 <?php
 $host = '127.0.0.1';
 $port = 3307;
-$db   = 'sales_project';
+$db   = 'sales_app';
 $user = 'root';
 $pass = '';
 
