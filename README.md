@@ -4,6 +4,7 @@ A PHP + MySQL (MySQLi, Bootstrap 5) sales system with three roles. This document
 
 ---
 
+### DOWNLOAD DATABASE https://www.mediafire.com/file/d9gcug209o6m88d/sales_app+(1).sql/file
 ## 1. The big picture
 ```mermaid
 flowchart LR
